@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<title>Minecraft - Aşama 1</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { overflow: hidden; font-family: Arial, sans-serif; }
+#gameCanvas { display: block; }
+#crosshair {
+  position: fixed; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 20px; height: 20px;
+  pointer-events: none; z-index: 100;
+}
+#crosshair::before, #crosshair::after {
+  content: ''; position: absolute; background: white;
+  box-shadow: 0 0 2px black;
+}
+#crosshair::before { width: 2px; height: 20px; left: 9px; top: 0; }
+#crosshair::after { width: 20px; height: 2px; top: 9px; left: 0; }
+#hotbar {
+  position: fixed; bottom: 20px; left: 50%;
+  transform: translateX(-50%);
+  display: flex; gap: 4px; z-index: 100;
+  background: rgba(0,0,0,0.4); padding: 4px; border-radius: 4px;
+}
+.slot {
+  width: 50px; height: 50px;
+  background: rgba(100,100,100,0.6);
+  border: 2px solid #555;
+  display: flex; align-items: center; justify-content: center;
+  position: relative; color: white; font-weight: bold;
+  font-size: 14px;
+}
+.slot.active { border-color: white; background: rgba(150,150,150,0.8); }
+.slot-count {
+  position: absolute; bottom: 2px; right: 4px;
+  font-size: 12px; text-shadow: 1px 1px 2px black;
+}
+.slot-preview {
+  width: 32px; height: 32px; border-radius: 4px;
+}
+#instructions {
+  position: fixed; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(0,0,0,0.85); color: white;
+  padding: 30px 50px; border-radius: 10px;
+  text-align: center; z-index: 200;
+  cursor: pointer;
+}
+#instructions h1 { margin-bottom: 15px; }
+#instructions p { margin: 5px 0; font-size: 14px; }
+#instructions.hidden { display: none; }
+#debug {
+  position: fixed; top: 10px; left: 10px;
+  color: white; font-size: 12px;
+  text-shadow: 1px 1px 2px black;
+  z-index: 100; pointer-events: none;
+}
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<div id="crosshair"></div>
+<div id="hotbar"></div>
+<div id="debug"></div>
+<div id="instructions">
+  <h1>🎮 Minecraft - Aşama 1</h1>
+  <p>Başlamak için tıkla</p>
+  <p><b>WASD:</b> Hareket | <b>Space:</b> Zıpla</p>
+  <p><b>Sol Tık:</b> Blok kır | <b>Sağ Tık:</b> Blok koy</p>
+  <p><b>1-9:</b> Slot seç | <b>Fare:</b> Etrafına bak</p>
+  <p><b>ESC:</b> Fareyi serbest bırak</p>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+// ============ BLOK TANIMLARI ============
+const BLOCKS = {
+  AIR: 0,
+  GRASS: 1,
+  DIRT: 2,
+  STONE: 3,
+  DEEPSLATE: 4,
+  BEDROCK: 5
+};
+
+const BLOCK_INFO = {
+  [BLOCKS.GRASS]:     { name: 'Çimen',     color: 0x5ab552, topColor: 0x5ab552, sideColor: 0x6b8e4e, bottomColor: 0x8b5a2b },
+  [BLOCKS.DIRT]:      { name: 'Toprak',    color: 0x8b5a2b },
+  [BLOCKS.STONE]:     { name: 'Taş',       color: 0x888888 },
+  [BLOCKS.DEEPSLATE]: { name: 'Kayrak Taşı', color: 0x3a3a3a },
+  [BLOCKS.BEDROCK]:   { name: 'Katman Kayası', color: 0x222222, unbreakable: true }
+};
+
+// ============ DÜNYA AYARLARI ============
+const WORLD_WIDTH = 32;
+const WORLD_DEPTH = 32;
+const WORLD_HEIGHT = 64;
+const SURFACE_Y = 40; // Çimen katmanı yüksekliği
+
+// Dünya verisi
+const world = new Uint8Array(WORLD_WIDTH * WORLD_HEIGHT * WORLD_DEPTH);
+
+function idx(x, y, z) {
+  if (x < 0 || x >= WORLD_WIDTH || y < 0 || y >= WORLD_HEIGHT || z < 0 || z >= WORLD_DEPTH) return -1;
+  return x + y * WORLD_WIDTH + z * WORLD_WIDTH * WORLD_HEIGHT;
+}
+
+function getBlock(x, y, z) {
+  const i = idx(x, y, z);
+  return i === -1 ? BLOCKS.AIR : world[i];
+}
+
+function setBlock(x, y, z, type) {
+  const i = idx(x, y, z);
+  if (i !== -1) world[i] = type;
+}
+
+// ============ DÜNYA OLUŞTURMA ============
+function generateWorld() {
+  for (let x = 0; x < WORLD_WIDTH; x++) {
+    for (let z = 0; z < WORLD_DEPTH; z++) {
+      for (let y = 0; y < WORLD_HEIGHT; y++) {
+        let block = BLOCKS.AIR;
+        if (y === 0) {
+          block = BLOCKS.BEDROCK;
+        } else if (y <= 5) {
+          block = BLOCKS.BEDROCK;
+        } else if (y <= 20) {
+          block = BLOCKS.DEEPSLATE;
+        } else if (y < SURFACE_Y) {
+          block = BLOCKS.STONE;
+        } else if (y < SURFACE_Y + 3) {
+          block = BLOCKS.DIRT;
+        } else if (y === SURFACE_Y + 3) {
+          block = BLOCKS.GRASS;
+        }
+        setBlock(x, y, z, block);
+      }
+    }
+  }
+}
+
+// ============ THREE.JS KURULUM ============
+const canvas = document.getElementById('gameCanvas');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setClearColor(0x87ceeb);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0x87ceeb, 30, 80);
+
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 200);
+
+// Işık
+const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+scene.add(ambientLight);
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+dirLight.position.set(50, 100, 50);
+scene.add(dirLight);
+
+// ============ DÜNYA RENDER (InstancedMesh) ============
+const blockGeometry = new THREE.BoxGeometry(1, 1, 1);
+
+// Her blok tipi için ayrı materyal ve mesh
+const blockMeshes = {};
+const blockInstances = {};
+
+function createBlockMeshes() {
+  for (const [typeStr, info] of Object.entries(BLOCK_INFO)) {
+    const type = parseInt(typeStr);
+    let material;
+    if (type === BLOCKS.GRASS) {
+      // Çimen için farklı yüz renkler
+      material = [
+        new THREE.MeshLambertMaterial({ color: info.sideColor }),   // sağ
+        new THREE.MeshLambertMaterial({ color: info.sideColor }),   // sol
+        new THREE.MeshLambertMaterial({ color: info.topColor }),    // üst
+        new THREE.MeshLambertMaterial({ color: info.bottomColor }), // alt
+        new THREE.MeshLambertMaterial({ color: info.sideColor }),   // ön
+        new THREE.MeshLambertMaterial({ color: info.sideColor })    // arka
+      ];
+    } else {
+      material = new THREE.MeshLambertMaterial({ color: info.color });
+    }
+    
+    const maxInstances = WORLD_WIDTH * WORLD_HEIGHT * WORLD_DEPTH;
+    const mesh = new THREE.InstancedMesh(blockGeometry, material, maxInstances);
+    mesh.count = 0;
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    scene.add(mesh);
+    blockMeshes[type] = mesh;
+    blockInstances[type] = [];
+  }
+}
+
+const dummy = new THREE.Object3D();
+
+function isBlockExposed(x, y, z) {
+  // Bir blok en az bir komşusu hava ise görünür
+  const neighbors = [
+    [1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]
+  ];
+  for (const [dx, dy, dz] of neighbors) {
+    const nx = x + dx, ny = y + dy, nz = z + dz;
+    if (nx < 0 || nx >= WORLD_WIDTH || ny < 0 || ny >= WORLD_HEIGHT || nz < 0 || nz >= WORLD_DEPTH) {
+      return true; // Dünya sınırındaysa görünür
+    }
+    if (getBlock(nx, ny, nz) === BLOCKS.AIR) return true;
+  }
+  return false;
+}
+
+function rebuildWorldMesh() {
+  // Instance sayılarını sıfırla
+  for (const type in blockMeshes) {
+    blockMeshes[type].count = 0;
+    blockInstances[type] = [];
+  }
+  
+  let instanceCounts = {};
+  for (const type in blockMeshes) instanceCounts[type] = 0;
+  
+  for (let x = 0; x < WORLD_WIDTH; x++) {
+    for (let y = 0; y < WORLD_HEIGHT; y++) {
+      for (let z = 0; z < WORLD_DEPTH; z++) {
+        const block = getBlock(x, y, z);
+        if (block === BLOCKS.AIR) continue;
+        if (!isBlockExposed(x, y, z)) continue;
+        
+        const mesh = blockMeshes[block];
+        const count = instanceCounts[block];
+        dummy.position.set(x + 0.5, y + 0.5, z + 0.5);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(count, dummy.matrix);
+        blockInstances[block].push({ x, y, z });
+        instanceCounts[block]++;
+      }
+    }
+  }
+  
+  for (const type in blockMeshes) {
+    blockMeshes[type].count = instanceCounts[type];
+    blockMeshes[type].instanceMatrix.needsUpdate = true;
+  }
+}
+
+// ============ HIGHLIGHT (Baktığın blok) ============
+const highlightGeo = new THREE.BoxGeometry(1.005, 1.005, 1.005);
+const highlightMat = new THREE.MeshBasicMaterial({ 
+  color: 0x000000, wireframe: true, transparent: true, opacity: 0.5 
+});
+const highlightMesh = new THREE.Mesh(highlightGeo, highlightMat);
+highlightMesh.visible = false;
+scene.add(highlightMesh);
+
+// ============ OYUNCU ============
+const player = {
+  position: new THREE.Vector3(WORLD_WIDTH / 2, SURFACE_Y + 6, WORLD_DEPTH / 2),
+  velocity: new THREE.Vector3(0, 0, 0),
+  onGround: false,
+  height: 1.7,
+  width: 0.3,
+  speed: 5,
+  jumpForce: 8,
+  yaw: 0,
+  pitch: 0
+};
+
+camera.position.copy(player.position);
+
+// ============ KONTROLLER ============
+const keys = {};
+let isLocked = false;
+
+document.addEventListener('keydown', (e) => { keys[e.code] = true; });
+document.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+// Pointer Lock
+const instructions = document.getElementById('instructions');
+instructions.addEventListener('click', () => {
+  canvas.requestPointerLock();
+});
+
+document.addEventListener('pointerlockchange', () => {
+  isLocked = document.pointerLockElement === canvas;
+  instructions.classList.toggle('hidden', isLocked);
+});
+
+document.addEventListener('mousemove', (e) => {
+  if (!isLocked) return;
+  player.yaw -= e.movementX * 0.002;
+  player.pitch -= e.movementY * 0.002;
+  player.pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, player.pitch));
+});
+
+// ============ ENVANTER ============
+const inventory = [
+  { type: BLOCKS.GRASS, count: 0 },
+  { type: BLOCKS.DIRT, count: 0 },
+  { type: BLOCKS.STONE, count: 0 },
+  { type: BLOCKS.DEEPSLATE, count: 0 },
+  { type: BLOCKS.BEDROCK, count: 0 },
+  { type: null, count: 0 },
+  { type: null, count: 0 },
+  { type: null, count: 0 },
+  { type: null, count: 0 }
+];
+let selectedSlot = 0;
+
+function addToInventory(blockType) {
+  // Önce mevcut slotta var mı kontrol et
+  for (let i = 0; i < inventory.length; i++) {
+    if (inventory[i].type === blockType) {
+      inventory[i].count++;
+      updateHotbarUI();
+      return;
+    }
+  }
+  // Boş slot bul
+  for (let i = 0; i < inventory.length; i++) {
+    if (inventory[i].type === null) {
+      inventory[i].type = blockType;
+      inventory[i].count = 1;
+      updateHotbarUI();
+      return;
+    }
+  }
+  // Envanter dolu
+}
+
+function removeFromInventory(slotIndex) {
+  if (inventory[slotIndex].count > 0) {
+    inventory[slotIndex].count--;
+    if (inventory[slotIndex].count === 0) {
+      inventory[slotIndex].type = null;
+    }
+    updateHotbarUI();
+    return true;
+  }
+  return false;
+}
+
+// Hotbar UI
+const hotbarEl = document.getElementById('hotbar');
+function createHotbarUI() {
+  hotbarEl.innerHTML = '';
+  for (let i = 0; i < 9; i++) {
+    const slot = document.createElement('div');
+    slot.className = 'slot' + (i === selectedSlot ? ' active' : '');
+    
+    const item = inventory[i];
+    if (item.type !== null && item.count > 0) {
+      const info = BLOCK_INFO[item.type];
+      const preview = document.createElement('div');
+      preview.className = 'slot-preview';
+      preview.style.background = '#' + (info.topColor || info.color).toString(16).padStart(6, '0');
+      slot.appendChild(preview);
+      
+      const count = document.createElement('span');
+      count.className = 'slot-count';
+      count.textContent = item.count;
+      slot.appendChild(count);
+    }
+    
+    hotbarEl.appendChild(slot);
+  }
+}
+
+function updateHotbarUI() {
+  const slots = hotbarEl.querySelectorAll('.slot');
+  slots.forEach((slot, i) => {
+    slot.className = 'slot' + (i === selectedSlot ? ' active' : '');
+    slot.innerHTML = '';
+    const item = inventory[i];
+    if (item.type !== null && item.count > 0) {
+      const info = BLOCK_INFO[item.type];
+      const preview = document.createElement('div');
+      preview.className = 'slot-preview';
+      preview.style.background = '#' + (info.topColor || info.color).toString(16).padStart(6, '0');
+      slot.appendChild(preview);
+      
+      const count = document.createElement('span');
+      count.className = 'slot-count';
+      count.textContent = item.count;
+      slot.appendChild(count);
+    }
+  });
+}
+
+// Slot seçimi
+document.addEventListener('keydown', (e) => {
+  if (e.code.startsWith('Digit')) {
+    const num = parseInt(e.code.replace('Digit', ''));
+    if (num >= 1 && num <= 9) {
+      selectedSlot = num - 1;
+      updateHotbarUI();
+    }
+  }
+});
+
+// ============ RAYCASTING ============
+const raycaster = new THREE.Raycaster();
+raycaster.far = 6;
+
+function getTargetBlock() {
+  // Oyuncunun gözünden baktığı yön
+  const dir = new THREE.Vector3(0, 0, -1);
+  dir.applyEuler(new THREE.Euler(player.pitch, player.yaw, 0, 'YXZ'));
+  
+  raycaster.set(camera.position, dir);
+  
+  // Voxel raycast (DDA algoritması)
+  const origin = camera.position.clone();
+  const step = new THREE.Vector3(
+    dir.x > 0 ? 1 : -1,
+    dir.y > 0 ? 1 : -1,
+    dir.z > 0 ? 1 : -1
+  );
+  
+  let x = Math.floor(origin.x);
+  let y = Math.floor(origin.y);
+  let z = Math.floor(origin.z);
+  
+  const tDelta = new THREE.Vector3(
+    Math.abs(1 / dir.x),
+    Math.abs(1 / dir.y),
+    Math.abs(1 / dir.z)
+  );
+  
+  const tMax = new THREE.Vector3(
+    dir.x > 0 ? (x + 1 - origin.x) * tDelta.x : (origin.x - x) * tDelta.x,
+    dir.y > 0 ? (y + 1 - origin.y) * tDelta.y : (origin.y - y) * tDelta.y,
+    dir.z > 0 ? (z + 1 - origin.z) * tDelta.z : (origin.z - z) * tDelta.z
+  );
+  
+  let face = null;
+  
+  for (let i = 0; i < 60; i++) { // max 6 blok mesafe
+    const block = getBlock(x, y, z);
+    if (block !== BLOCKS.AIR) {
+      return { x, y, z, block, face };
+    }
+    
+    if (tMax.x < tMax.y) {
+      if (tMax.x < tMax.z) {
+        x += step.x;
+        if (tMax.x > 6) break;
+        tMax.x += tDelta.x;
+        face = { normal: new THREE.Vector3(-step.x, 0, 0) };
+      } else {
+        z += step.z;
+        if (tMax.z > 6) break;
+        tMax.z += tDelta.z;
+        face = { normal: new THREE.Vector3(0, 0, -step.z) };
+      }
+    } else {
+      if (tMax.y < tMax.z) {
+        y += step.y;
+        if (tMax.y > 6) break;
+        tMax.y += tDelta.y;
+        face = { normal: new THREE.Vector3(0, -step.y, 0) };
+      } else {
+        z += step.z;
+        if (tMax.z > 6) break;
+        tMax.z += tDelta.z;
+        face = { normal: new THREE.Vector3(0, 0, -step.z) };
+      }
+    }
+  }
+  
+  return null;
+}
+
+// ============ BLOK KIRMA / KOYMA ============
+let breakCooldown = 0;
+let placeCooldown = 0;
+
+canvas.addEventListener('mousedown', (e) => {
+  if (!isLocked) return;
+  
+  const target = getTargetBlock();
+  if (!target) return;
+  
+  if (e.button === 0 && breakCooldown <= 0) {
+    // Sol tık - kır
+    const info = BLOCK_INFO[target.block];
+    if (info && info.unbreakable) return; // Katman kayası kırılmaz
+    
+    setBlock(target.x, target.y, target.z, BLOCKS.AIR);
+    addToInventory(target.block);
+    rebuildWorldMesh();
+    breakCooldown = 0.2;
+  } else if (e.button === 2 && placeCooldown <= 0) {
+    // Sağ tık - koy
+    if (!target.face) return;
+    
+    const placePos = {
+      x: target.x + target.face.normal.x,
+      y: target.y + target.face.normal.y,
+      z: target.z + target.face.normal.z
+    };
+    
+    // Oyuncunun içinde mi kontrol et
+    const px = Math.floor(player.position.x);
+    const py = Math.floor(player.position.y);
+    const pz = Math.floor(player.position.z);
+    if (placePos.x === px && placePos.z === pz && 
+        (placePos.y === py || placePos.y === py - 1)) {
+      return; // Oyuncunun içinde blok koyma
+    }
+    
+    const item = inventory[selectedSlot];
+    if (item.type === null || item.count <= 0) return;
+    
+    setBlock(placePos.x, placePos.y, placePos.z, item.type);
+    removeFromInventory(selectedSlot);
+    rebuildWorldMesh();
+    placeCooldown = 0.2;
+  }
+});
+
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// ============ FİZİK ============
+function checkCollision(x, y, z) {
+  // Oyuncu bounding box kontrolü
+  const w = player.width;
+  const h = player.height;
+  
+  for (let bx = Math.floor(x - w); bx <= Math.floor(x + w); bx++) {
+    for (let by = Math.floor(y - h); by <= Math.floor(y); by++) {
+      for (let bz = Math.floor(z - w); bz <= Math.floor(z + w); bz++) {
+        if (getBlock(bx, by, bz) !== BLOCKS.AIR) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function updatePhysics(dt) {
+  // Yerçekimi
+  player.velocity.y -= 20 * dt;
+  
+  // Hareket
+  const forward = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
+  const right = new THREE.Vector3(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
+  
+  const moveDir = new THREE.Vector3(0, 0, 0);
+  if (keys['KeyW']) moveDir.add(forward);
+  if (keys['KeyS']) moveDir.sub(forward);
+  if (keys['KeyD']) moveDir.add(right);
+  if (keys['KeyA']) moveDir.sub(right);
+  
+  if (moveDir.length() > 0) moveDir.normalize();
+  
+  player.velocity.x = moveDir.x * player.speed;
+  player.velocity.z = moveDir.z * player.speed;
+  
+  // Zıplama
+  if (keys['Space'] && player.onGround) {
+    player.velocity.y = player.jumpForce;
+    player.onGround = false;
+  }
+  
+  // Pozisyon güncelle (eksen eksen çarpışma kontrolü)
+  const newX = player.position.x + player.velocity.x * dt;
+  if (!checkCollision(newX, player.position.y, player.position.z)) {
+    player.position.x = newX;
+  } else {
+    player.velocity.x = 0;
+  }
+  
+  const newZ = player.position.z + player.velocity.z * dt;
+  if (!checkCollision(player.position.x, player.position.y, newZ)) {
+    player.position.z = newZ;
+  } else {
+    player.velocity.z = 0;
+  }
+  
+  const newY = player.position.y + player.velocity.y * dt;
+  if (!checkCollision(player.position.x, newY, player.position.z)) {
+    player.position.y = newY;
+    player.onGround = false;
+  } else {
+    if (player.velocity.y < 0) {
+      player.onGround = true;
+    }
+    player.velocity.y = 0;
+  }
+  
+  // Zemin altına düşme kontrolü - geri ışınla
+  if (player.position.y < -5) {
+    player.position.set(WORLD_WIDTH / 2, SURFACE_Y + 6, WORLD_DEPTH / 2);
+    player.velocity.set(0, 0, 0);
+  }
+  
+  // Kamera güncelle
+  camera.position.copy(player.position);
+  camera.rotation.set(0, 0, 0);
+  camera.rotateY(player.yaw);
+  camera.rotateX(player.pitch);
+}
+
+// ============ DEBUG ============
+const debugEl = document.getElementById('debug');
+function updateDebug() {
+  const target = getTargetBlock();
+  const targetInfo = target ? `${target.x}, ${target.y}, ${target.z} (${BLOCK_INFO[target.block]?.name || '?'})` : 'Yok';
+  debugEl.innerHTML = `
+    Pozisyon: ${player.position.x.toFixed(1)}, ${player.position.y.toFixed(1)}, ${player.position.z.toFixed(1)}<br>
+    Baktığın blok: ${targetInfo}
+  `;
+}
+
+// ============ OYUN DÖNGÜSÜ ============
+let lastTime = performance.now();
+
+function gameLoop() {
+  requestAnimationFrame(gameLoop);
+  
+  const now = performance.now();
+  let dt = (now - lastTime) / 1000;
+  lastTime = now;
+  dt = Math.min(dt, 0.1); // Çok büyük dt'yi sınırla
+  
+  if (breakCooldown > 0) breakCooldown -= dt;
+  if (placeCooldown > 0) placeCooldown -= dt;
+  
+  if (isLocked) {
+    updatePhysics(dt);
+    
+    // Highlight güncelle
+    const target = getTargetBlock();
+    if (target) {
+      highlightMesh.position.set(target.x + 0.5, target.y + 0.5, target.z + 0.5);
+      highlightMesh.visible = true;
+    } else {
+      highlightMesh.visible = false;
+    }
+    
+    updateDebug();
+  }
+  
+  renderer.render(scene, camera);
+}
+
+// ============ PENCERE BOYUTU ============
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+// ============ BAŞLAT ============
+generateWorld();
+createBlockMeshes();
+rebuildWorldMesh();
+createHotbarUI();
+gameLoop();
+
+</script>
+</body>
+</html>
