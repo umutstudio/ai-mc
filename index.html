@@ -2,10 +2,10 @@
 <html lang="tr">
 <head>
 <meta charset="UTF-8">
-<title>Minecraft - Aşama 1</title>
+<title>AI-MC</title>
 <style>
 * { margin: 0; padding: 0; box-sizing: border-box; }
-body { overflow: hidden; font-family: Arial, sans-serif; }
+body { overflow: hidden; font-family: 'Segoe UI', Arial, sans-serif; }
 #gameCanvas { display: block; }
 #crosshair {
   position: fixed; top: 50%; left: 50%;
@@ -31,7 +31,7 @@ body { overflow: hidden; font-family: Arial, sans-serif; }
   border: 2px solid #555;
   display: flex; align-items: center; justify-content: center;
   position: relative; color: white; font-weight: bold;
-  font-size: 14px;
+  font-size: 14px; cursor: pointer;
 }
 .slot.active { border-color: white; background: rgba(150,150,150,0.8); }
 .slot-count {
@@ -58,6 +58,54 @@ body { overflow: hidden; font-family: Arial, sans-serif; }
   text-shadow: 1px 1px 2px black;
   z-index: 100; pointer-events: none;
 }
+#pauseMenu {
+  position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+  background: rgba(0,0,0,0.7); z-index: 300;
+  display: none; align-items: center; justify-content: center;
+  flex-direction: column;
+}
+#pauseMenu.show { display: flex; }
+#pauseMenu h1 {
+  color: white; font-size: 48px; margin-bottom: 40px;
+  text-shadow: 2px 2px 4px black;
+}
+.menu-button {
+  width: 300px; padding: 15px; margin: 10px;
+  background: rgba(100,100,100,0.8); border: 2px solid #555;
+  color: white; font-size: 18px; cursor: pointer;
+  border-radius: 5px; transition: all 0.2s;
+}
+.menu-button:hover {
+  background: rgba(150,150,150,0.9); border-color: white;
+}
+#inventory {
+  position: fixed; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(50,50,50,0.95); padding: 20px;
+  border: 3px solid #333; border-radius: 10px;
+  z-index: 250; display: none;
+}
+#inventory.show { display: block; }
+#inventory h2 {
+  color: white; margin-bottom: 15px; text-align: center;
+}
+.inventory-grid {
+  display: grid; grid-template-columns: repeat(9, 50px);
+  gap: 4px; margin-bottom: 15px;
+}
+.inventory-slot {
+  width: 50px; height: 50px;
+  background: rgba(100,100,100,0.6);
+  border: 2px solid #555;
+  display: flex; align-items: center; justify-content: center;
+  position: relative; cursor: pointer;
+}
+.inventory-slot:hover { border-color: white; }
+.inventory-slot.active { border-color: #ffaa00; }
+#inventory .hotbar-section {
+  border-top: 2px solid #666; padding-top: 10px;
+}
+#debug.hidden { display: none; }
 </style>
 </head>
 <body>
@@ -66,12 +114,24 @@ body { overflow: hidden; font-family: Arial, sans-serif; }
 <div id="hotbar"></div>
 <div id="debug"></div>
 <div id="instructions">
-  <h1>🎮 Minecraft - Aşama 1</h1>
+  <h1>🎮 Minecraft - Aşama 2</h1>
   <p>Başlamak için tıkla</p>
-  <p><b>WASD:</b> Hareket | <b>Space:</b> Zıpla</p>
+  <p><b>WASD:</b> Hareket | <b>Space:</b> Zıpla | <b>Shift:</b> Koş</p>
   <p><b>Sol Tık:</b> Blok kır | <b>Sağ Tık:</b> Blok koy</p>
-  <p><b>1-9:</b> Slot seç | <b>Fare:</b> Etrafına bak</p>
-  <p><b>ESC:</b> Fareyi serbest bırak</p>
+  <p><b>1-9:</b> Slot seç | <b>E:</b> Envanter | <b>ESC:</b> Menü</p>
+  <p><b>Fare:</b> Etrafına bak</p>
+</div>
+<div id="pauseMenu">
+  <h1>Oyun Duraklatıldı</h1>
+  <button class="menu-button" id="resumeBtn">Oyuna Dön</button>
+  <button class="menu-button" id="settingsBtn">Ayarlar</button>
+</div>
+<div id="inventory">
+  <h2>Envanter</h2>
+  <div class="inventory-grid" id="mainInventory"></div>
+  <div class="hotbar-section">
+    <div class="inventory-grid" id="hotbarInventory"></div>
+  </div>
 </div>
 
 <script type="importmap">
@@ -92,7 +152,9 @@ const BLOCKS = {
   DIRT: 2,
   STONE: 3,
   DEEPSLATE: 4,
-  BEDROCK: 5
+  BEDROCK: 5,
+  WOOD: 6,
+  LEAVES: 7
 };
 
 const BLOCK_INFO = {
@@ -100,16 +162,17 @@ const BLOCK_INFO = {
   [BLOCKS.DIRT]:      { name: 'Toprak',    color: 0x8b5a2b },
   [BLOCKS.STONE]:     { name: 'Taş',       color: 0x888888 },
   [BLOCKS.DEEPSLATE]: { name: 'Kayrak Taşı', color: 0x3a3a3a },
-  [BLOCKS.BEDROCK]:   { name: 'Katman Kayası', color: 0x222222, unbreakable: true }
+  [BLOCKS.BEDROCK]:   { name: 'Katman Kayası', color: 0x222222, unbreakable: true },
+  [BLOCKS.WOOD]:      { name: 'Ağaç Gövdesi', color: 0x6b4423 },
+  [BLOCKS.LEAVES]:    { name: 'Yapraklar', color: 0x2d7a2d, transparent: true }
 };
 
 // ============ DÜNYA AYARLARI ============
-const WORLD_WIDTH = 32;
-const WORLD_DEPTH = 32;
+const WORLD_WIDTH = 64;
+const WORLD_DEPTH = 64;
 const WORLD_HEIGHT = 64;
-const SURFACE_Y = 40; // Çimen katmanı yüksekliği
+const SURFACE_Y = 40;
 
-// Dünya verisi
 const world = new Uint8Array(WORLD_WIDTH * WORLD_HEIGHT * WORLD_DEPTH);
 
 function idx(x, y, z) {
@@ -129,6 +192,7 @@ function setBlock(x, y, z, type) {
 
 // ============ DÜNYA OLUŞTURMA ============
 function generateWorld() {
+  // Temel katmanlar
   for (let x = 0; x < WORLD_WIDTH; x++) {
     for (let z = 0; z < WORLD_DEPTH; z++) {
       for (let y = 0; y < WORLD_HEIGHT; y++) {
@@ -150,6 +214,52 @@ function generateWorld() {
       }
     }
   }
+  
+  // Ağaçlar oluştur
+  generateTrees();
+}
+
+function generateTrees() {
+  // Grid sistemi ile düzenli ama random ağaçlar
+  const gridSpacing = 8; // Her 8 blokta bir ağaç denemesi
+  const treeChance = 0.3; // %30 şans
+  
+  for (let gx = 2; gx < WORLD_WIDTH - 2; gx += gridSpacing) {
+    for (let gz = 2; gz < WORLD_DEPTH - 2; gz += gridSpacing) {
+      if (Math.random() < treeChance) {
+        const x = gx + Math.floor(Math.random() * 4);
+        const z = gz + Math.floor(Math.random() * 4);
+        const groundY = SURFACE_Y + 3;
+        
+        if (getBlock(x, groundY, z) === BLOCKS.GRASS) {
+          placeTree(x, groundY + 1, z);
+        }
+      }
+    }
+  }
+}
+
+function placeTree(x, y, z) {
+  // Gövde (4-6 blok yükseklik)
+  const height = 4 + Math.floor(Math.random() * 3);
+  for (let i = 0; i < height; i++) {
+    setBlock(x, y + i, z, BLOCKS.WOOD);
+  }
+  
+  // Yapraklar
+  const leafStart = y + height - 2;
+  for (let dy = 0; dy < 3; dy++) {
+    const radius = dy === 2 ? 1 : 2;
+    for (let dx = -radius; dx <= radius; dx++) {
+      for (let dz = -radius; dz <= radius; dz++) {
+        if (dx === 0 && dz === 0 && dy < 2) continue; // Gövde yerine koyma
+        if (Math.abs(dx) === radius && Math.abs(dz) === radius && Math.random() < 0.3) continue; // Köşeleri kır
+        setBlock(x + dx, leafStart + dy, z + dz, BLOCKS.LEAVES);
+      }
+    }
+  }
+  // Üst yaprak
+  setBlock(x, leafStart + 3, z, BLOCKS.LEAVES);
 }
 
 // ============ THREE.JS KURULUM ============
@@ -160,21 +270,18 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setClearColor(0x87ceeb);
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x87ceeb, 30, 80);
+scene.fog = new THREE.Fog(0x87ceeb, 40, 100);
 
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 200);
 
-// Işık
 const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
 scene.add(ambientLight);
 const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
 dirLight.position.set(50, 100, 50);
 scene.add(dirLight);
 
-// ============ DÜNYA RENDER (InstancedMesh) ============
+// ============ DÜNYA RENDER ============
 const blockGeometry = new THREE.BoxGeometry(1, 1, 1);
-
-// Her blok tipi için ayrı materyal ve mesh
 const blockMeshes = {};
 const blockInstances = {};
 
@@ -182,16 +289,22 @@ function createBlockMeshes() {
   for (const [typeStr, info] of Object.entries(BLOCK_INFO)) {
     const type = parseInt(typeStr);
     let material;
+    
     if (type === BLOCKS.GRASS) {
-      // Çimen için farklı yüz renkler
       material = [
-        new THREE.MeshLambertMaterial({ color: info.sideColor }),   // sağ
-        new THREE.MeshLambertMaterial({ color: info.sideColor }),   // sol
-        new THREE.MeshLambertMaterial({ color: info.topColor }),    // üst
-        new THREE.MeshLambertMaterial({ color: info.bottomColor }), // alt
-        new THREE.MeshLambertMaterial({ color: info.sideColor }),   // ön
-        new THREE.MeshLambertMaterial({ color: info.sideColor })    // arka
+        new THREE.MeshLambertMaterial({ color: info.sideColor }),
+        new THREE.MeshLambertMaterial({ color: info.sideColor }),
+        new THREE.MeshLambertMaterial({ color: info.topColor }),
+        new THREE.MeshLambertMaterial({ color: info.bottomColor }),
+        new THREE.MeshLambertMaterial({ color: info.sideColor }),
+        new THREE.MeshLambertMaterial({ color: info.sideColor })
       ];
+    } else if (info.transparent) {
+      material = new THREE.MeshLambertMaterial({ 
+        color: info.color, 
+        transparent: true, 
+        opacity: 0.8 
+      });
     } else {
       material = new THREE.MeshLambertMaterial({ color: info.color });
     }
@@ -199,8 +312,6 @@ function createBlockMeshes() {
     const maxInstances = WORLD_WIDTH * WORLD_HEIGHT * WORLD_DEPTH;
     const mesh = new THREE.InstancedMesh(blockGeometry, material, maxInstances);
     mesh.count = 0;
-    mesh.castShadow = false;
-    mesh.receiveShadow = false;
     scene.add(mesh);
     blockMeshes[type] = mesh;
     blockInstances[type] = [];
@@ -210,22 +321,20 @@ function createBlockMeshes() {
 const dummy = new THREE.Object3D();
 
 function isBlockExposed(x, y, z) {
-  // Bir blok en az bir komşusu hava ise görünür
-  const neighbors = [
-    [1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]
-  ];
+  const neighbors = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
   for (const [dx, dy, dz] of neighbors) {
     const nx = x + dx, ny = y + dy, nz = z + dz;
     if (nx < 0 || nx >= WORLD_WIDTH || ny < 0 || ny >= WORLD_HEIGHT || nz < 0 || nz >= WORLD_DEPTH) {
-      return true; // Dünya sınırındaysa görünür
+      return true;
     }
-    if (getBlock(nx, ny, nz) === BLOCKS.AIR) return true;
+    const neighbor = getBlock(nx, ny, nz);
+    if (neighbor === BLOCKS.AIR) return true;
+    if (BLOCK_INFO[neighbor]?.transparent) return true;
   }
   return false;
 }
 
 function rebuildWorldMesh() {
-  // Instance sayılarını sıfırla
   for (const type in blockMeshes) {
     blockMeshes[type].count = 0;
     blockInstances[type] = [];
@@ -258,7 +367,7 @@ function rebuildWorldMesh() {
   }
 }
 
-// ============ HIGHLIGHT (Baktığın blok) ============
+// ============ HIGHLIGHT ============
 const highlightGeo = new THREE.BoxGeometry(1.005, 1.005, 1.005);
 const highlightMat = new THREE.MeshBasicMaterial({ 
   color: 0x000000, wireframe: true, transparent: true, opacity: 0.5 
@@ -274,7 +383,8 @@ const player = {
   onGround: false,
   height: 1.7,
   width: 0.3,
-  speed: 5,
+  speed: 4.5,
+  sprintSpeed: 7,
   jumpForce: 8,
   yaw: 0,
   pitch: 0
@@ -285,8 +395,35 @@ camera.position.copy(player.position);
 // ============ KONTROLLER ============
 const keys = {};
 let isLocked = false;
+let isPaused = false;
+let isInventoryOpen = false;
 
-document.addEventListener('keydown', (e) => { keys[e.code] = true; });
+document.addEventListener('keydown', (e) => { 
+  keys[e.code] = true;
+  
+  // ESC - Pause menü
+  if (e.code === 'Escape' && isLocked && !isInventoryOpen) {
+    document.exitPointerLock();
+    isPaused = true;
+    document.getElementById('pauseMenu').classList.add('show');
+    document.getElementById('crosshair').style.display = 'none';
+  }
+  
+  // E - Envanter
+  if (e.code === 'KeyE' && isLocked && !isPaused) {
+    toggleInventory();
+  }
+  
+  // Slot seçimi
+  if (e.code.startsWith('Digit') && !isInventoryOpen) {
+    const num = parseInt(e.code.replace('Digit', ''));
+    if (num >= 1 && num <= 9) {
+      selectedSlot = num - 1;
+      updateHotbarUI();
+    }
+  }
+});
+
 document.addEventListener('keyup', (e) => { keys[e.code] = false; });
 
 // Pointer Lock
@@ -297,36 +434,31 @@ instructions.addEventListener('click', () => {
 
 document.addEventListener('pointerlockchange', () => {
   isLocked = document.pointerLockElement === canvas;
-  instructions.classList.toggle('hidden', isLocked);
+  instructions.classList.toggle('hidden', isLocked || isPaused || isInventoryOpen);
+  
+  if (!isLocked && !isPaused && !isInventoryOpen) {
+    // Fare serbest bırakıldı ama menü açık değil
+  }
 });
 
 document.addEventListener('mousemove', (e) => {
-  if (!isLocked) return;
+  if (!isLocked || isPaused || isInventoryOpen) return;
   player.yaw -= e.movementX * 0.002;
   player.pitch -= e.movementY * 0.002;
   player.pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, player.pitch));
 });
 
 // ============ ENVANTER ============
-const inventory = [
-  { type: BLOCKS.GRASS, count: 0 },
-  { type: BLOCKS.DIRT, count: 0 },
-  { type: BLOCKS.STONE, count: 0 },
-  { type: BLOCKS.DEEPSLATE, count: 0 },
-  { type: BLOCKS.BEDROCK, count: 0 },
-  { type: null, count: 0 },
-  { type: null, count: 0 },
-  { type: null, count: 0 },
-  { type: null, count: 0 }
-];
+const inventory = Array(36).fill(null).map(() => ({ type: null, count: 0 }));
 let selectedSlot = 0;
 
 function addToInventory(blockType) {
-  // Önce mevcut slotta var mı kontrol et
+  // Önce mevcut slotta var mı
   for (let i = 0; i < inventory.length; i++) {
     if (inventory[i].type === blockType) {
       inventory[i].count++;
       updateHotbarUI();
+      if (isInventoryOpen) updateInventoryUI();
       return;
     }
   }
@@ -336,10 +468,10 @@ function addToInventory(blockType) {
       inventory[i].type = blockType;
       inventory[i].count = 1;
       updateHotbarUI();
+      if (isInventoryOpen) updateInventoryUI();
       return;
     }
   }
-  // Envanter dolu
 }
 
 function removeFromInventory(slotIndex) {
@@ -349,6 +481,7 @@ function removeFromInventory(slotIndex) {
       inventory[slotIndex].type = null;
     }
     updateHotbarUI();
+    if (isInventoryOpen) updateInventoryUI();
     return true;
   }
   return false;
@@ -361,6 +494,7 @@ function createHotbarUI() {
   for (let i = 0; i < 9; i++) {
     const slot = document.createElement('div');
     slot.className = 'slot' + (i === selectedSlot ? ' active' : '');
+    slot.dataset.slot = i;
     
     const item = inventory[i];
     if (item.type !== null && item.count > 0) {
@@ -401,15 +535,83 @@ function updateHotbarUI() {
   });
 }
 
-// Slot seçimi
-document.addEventListener('keydown', (e) => {
-  if (e.code.startsWith('Digit')) {
-    const num = parseInt(e.code.replace('Digit', ''));
-    if (num >= 1 && num <= 9) {
-      selectedSlot = num - 1;
-      updateHotbarUI();
-    }
+// Envanter UI
+const inventoryEl = document.getElementById('inventory');
+const mainInventoryEl = document.getElementById('mainInventory');
+const hotbarInventoryEl = document.getElementById('hotbarInventory');
+
+function toggleInventory() {
+  isInventoryOpen = !isInventoryOpen;
+  inventoryEl.classList.toggle('show', isInventoryOpen);
+  
+  if (isInventoryOpen) {
+    document.exitPointerLock();
+    updateInventoryUI();
+    document.getElementById('crosshair').style.display = 'none';
+  } else {
+    canvas.requestPointerLock();
+    document.getElementById('crosshair').style.display = 'block';
   }
+}
+
+function updateInventoryUI() {
+  // Ana envanter (slot 9-35)
+  mainInventoryEl.innerHTML = '';
+  for (let i = 9; i < 36; i++) {
+    const slot = createInventorySlot(i);
+    mainInventoryEl.appendChild(slot);
+  }
+  
+  // Hotbar (slot 0-8)
+  hotbarInventoryEl.innerHTML = '';
+  for (let i = 0; i < 9; i++) {
+    const slot = createInventorySlot(i);
+    if (i === selectedSlot) slot.classList.add('active');
+    hotbarInventoryEl.appendChild(slot);
+  }
+}
+
+function createInventorySlot(index) {
+  const slot = document.createElement('div');
+  slot.className = 'inventory-slot';
+  slot.dataset.slot = index;
+  
+  const item = inventory[index];
+  if (item.type !== null && item.count > 0) {
+    const info = BLOCK_INFO[item.type];
+    const preview = document.createElement('div');
+    preview.className = 'slot-preview';
+    preview.style.background = '#' + (info.topColor || info.color).toString(16).padStart(6, '0');
+    slot.appendChild(preview);
+    
+    const count = document.createElement('span');
+    count.className = 'slot-count';
+    count.textContent = item.count;
+    slot.appendChild(count);
+  }
+  
+  slot.addEventListener('click', () => {
+    // Slot seçimi (hotbar için)
+    if (index < 9) {
+      selectedSlot = index;
+      updateHotbarUI();
+      updateInventoryUI();
+    }
+  });
+  
+  return slot;
+}
+
+// ============ PAUSE MENÜ ============
+document.getElementById('resumeBtn').addEventListener('click', () => {
+  isPaused = false;
+  document.getElementById('pauseMenu').classList.remove('show');
+  canvas.requestPointerLock();
+  document.getElementById('crosshair').style.display = 'block';
+});
+
+document.getElementById('settingsBtn').addEventListener('click', () => {
+  alert('Ayarlar sayfası yakında eklenecek!');
 });
 
 // ============ RAYCASTING ============
@@ -417,13 +619,11 @@ const raycaster = new THREE.Raycaster();
 raycaster.far = 6;
 
 function getTargetBlock() {
-  // Oyuncunun gözünden baktığı yön
   const dir = new THREE.Vector3(0, 0, -1);
   dir.applyEuler(new THREE.Euler(player.pitch, player.yaw, 0, 'YXZ'));
   
   raycaster.set(camera.position, dir);
   
-  // Voxel raycast (DDA algoritması)
   const origin = camera.position.clone();
   const step = new THREE.Vector3(
     dir.x > 0 ? 1 : -1,
@@ -449,7 +649,7 @@ function getTargetBlock() {
   
   let face = null;
   
-  for (let i = 0; i < 60; i++) { // max 6 blok mesafe
+  for (let i = 0; i < 60; i++) {
     const block = getBlock(x, y, z);
     if (block !== BLOCKS.AIR) {
       return { x, y, z, block, face };
@@ -490,22 +690,20 @@ let breakCooldown = 0;
 let placeCooldown = 0;
 
 canvas.addEventListener('mousedown', (e) => {
-  if (!isLocked) return;
+  if (!isLocked || isPaused || isInventoryOpen) return;
   
   const target = getTargetBlock();
   if (!target) return;
   
   if (e.button === 0 && breakCooldown <= 0) {
-    // Sol tık - kır
     const info = BLOCK_INFO[target.block];
-    if (info && info.unbreakable) return; // Katman kayası kırılmaz
+    if (info && info.unbreakable) return;
     
     setBlock(target.x, target.y, target.z, BLOCKS.AIR);
     addToInventory(target.block);
     rebuildWorldMesh();
     breakCooldown = 0.2;
   } else if (e.button === 2 && placeCooldown <= 0) {
-    // Sağ tık - koy
     if (!target.face) return;
     
     const placePos = {
@@ -514,13 +712,12 @@ canvas.addEventListener('mousedown', (e) => {
       z: target.z + target.face.normal.z
     };
     
-    // Oyuncunun içinde mi kontrol et
     const px = Math.floor(player.position.x);
     const py = Math.floor(player.position.y);
     const pz = Math.floor(player.position.z);
     if (placePos.x === px && placePos.z === pz && 
         (placePos.y === py || placePos.y === py - 1)) {
-      return; // Oyuncunun içinde blok koyma
+      return;
     }
     
     const item = inventory[selectedSlot];
@@ -537,7 +734,6 @@ canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
 // ============ FİZİK ============
 function checkCollision(x, y, z) {
-  // Oyuncu bounding box kontrolü
   const w = player.width;
   const h = player.height;
   
@@ -554,10 +750,8 @@ function checkCollision(x, y, z) {
 }
 
 function updatePhysics(dt) {
-  // Yerçekimi
   player.velocity.y -= 20 * dt;
   
-  // Hareket
   const forward = new THREE.Vector3(-Math.sin(player.yaw), 0, -Math.cos(player.yaw));
   const right = new THREE.Vector3(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
   
@@ -569,16 +763,17 @@ function updatePhysics(dt) {
   
   if (moveDir.length() > 0) moveDir.normalize();
   
-  player.velocity.x = moveDir.x * player.speed;
-  player.velocity.z = moveDir.z * player.speed;
+  // Koşma
+  const currentSpeed = keys['ShiftLeft'] || keys['ShiftRight'] ? player.sprintSpeed : player.speed;
   
-  // Zıplama
+  player.velocity.x = moveDir.x * currentSpeed;
+  player.velocity.z = moveDir.z * currentSpeed;
+  
   if (keys['Space'] && player.onGround) {
     player.velocity.y = player.jumpForce;
     player.onGround = false;
   }
   
-  // Pozisyon güncelle (eksen eksen çarpışma kontrolü)
   const newX = player.position.x + player.velocity.x * dt;
   if (!checkCollision(newX, player.position.y, player.position.z)) {
     player.position.x = newX;
@@ -604,13 +799,11 @@ function updatePhysics(dt) {
     player.velocity.y = 0;
   }
   
-  // Zemin altına düşme kontrolü - geri ışınla
   if (player.position.y < -5) {
     player.position.set(WORLD_WIDTH / 2, SURFACE_Y + 6, WORLD_DEPTH / 2);
     player.velocity.set(0, 0, 0);
   }
   
-  // Kamera güncelle
   camera.position.copy(player.position);
   camera.rotation.set(0, 0, 0);
   camera.rotateY(player.yaw);
@@ -622,8 +815,9 @@ const debugEl = document.getElementById('debug');
 function updateDebug() {
   const target = getTargetBlock();
   const targetInfo = target ? `${target.x}, ${target.y}, ${target.z} (${BLOCK_INFO[target.block]?.name || '?'})` : 'Yok';
+  const sprinting = keys['ShiftLeft'] || keys['ShiftRight'] ? ' (Koşuyor)' : '';
   debugEl.innerHTML = `
-    Pozisyon: ${player.position.x.toFixed(1)}, ${player.position.y.toFixed(1)}, ${player.position.z.toFixed(1)}<br>
+    Pozisyon: ${player.position.x.toFixed(1)}, ${player.position.y.toFixed(1)}, ${player.position.z.toFixed(1)}${sprinting}<br>
     Baktığın blok: ${targetInfo}
   `;
 }
@@ -637,15 +831,14 @@ function gameLoop() {
   const now = performance.now();
   let dt = (now - lastTime) / 1000;
   lastTime = now;
-  dt = Math.min(dt, 0.1); // Çok büyük dt'yi sınırla
+  dt = Math.min(dt, 0.1);
   
   if (breakCooldown > 0) breakCooldown -= dt;
   if (placeCooldown > 0) placeCooldown -= dt;
   
-  if (isLocked) {
+  if (isLocked && !isPaused && !isInventoryOpen) {
     updatePhysics(dt);
     
-    // Highlight güncelle
     const target = getTargetBlock();
     if (target) {
       highlightMesh.position.set(target.x + 0.5, target.y + 0.5, target.z + 0.5);
@@ -655,6 +848,9 @@ function gameLoop() {
     }
     
     updateDebug();
+    debugEl.classList.remove('hidden');
+  } else {
+    debugEl.classList.add('hidden');
   }
   
   renderer.render(scene, camera);
