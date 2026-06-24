@@ -101,11 +101,57 @@ body { overflow: hidden; font-family: 'Segoe UI', Arial, sans-serif; }
   position: relative; cursor: pointer;
 }
 .inventory-slot:hover { border-color: white; }
-.inventory-slot.active { border-color: #ffaa00; }
+.inventory-slot.selected { border-color: #ffaa00; background: rgba(255,170,0,0.2); }
 #inventory .hotbar-section {
   border-top: 2px solid #666; padding-top: 10px;
 }
 #debug.hidden { display: none; }
+
+/* Crafting Menu */
+#craftingMenu {
+  position: fixed; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  background: rgba(50,50,50,0.95); padding: 30px;
+  border: 3px solid #333; border-radius: 10px;
+  z-index: 250; display: none;
+}
+#craftingMenu.show { display: block; }
+#craftingMenu h2 {
+  color: white; margin-bottom: 20px; text-align: center;
+}
+.crafting-container {
+  display: flex; align-items: center; gap: 30px;
+  margin-bottom: 20px;
+}
+.crafting-grid {
+  display: grid; grid-template-columns: repeat(3, 50px);
+  gap: 4px;
+}
+.crafting-slot {
+  width: 50px; height: 50px;
+  background: rgba(100,100,100,0.6);
+  border: 2px solid #555;
+  display: flex; align-items: center; justify-content: center;
+  position: relative; cursor: pointer;
+}
+.crafting-slot:hover { border-color: white; }
+.crafting-arrow {
+  font-size: 40px; color: white;
+}
+.crafting-result {
+  width: 60px; height: 60px;
+  background: rgba(150,150,150,0.6);
+  border: 3px solid #888;
+  display: flex; align-items: center; justify-content: center;
+  position: relative; cursor: pointer;
+}
+.crafting-result:hover { border-color: #ffaa00; }
+.crafting-inventory {
+  border-top: 2px solid #666; padding-top: 15px;
+}
+.crafting-inventory h3 {
+  color: white; margin-bottom: 10px; font-size: 14px;
+}
 </style>
 </head>
 <body>
@@ -114,12 +160,12 @@ body { overflow: hidden; font-family: 'Segoe UI', Arial, sans-serif; }
 <div id="hotbar"></div>
 <div id="debug"></div>
 <div id="instructions">
-  <h1>🎮 Minecraft - Aşama 2</h1>
+  <h1>🎮 Minecraft - Aşama 3</h1>
   <p>Başlamak için tıkla</p>
   <p><b>WASD:</b> Hareket | <b>Space:</b> Zıpla | <b>Shift:</b> Koş</p>
   <p><b>Sol Tık:</b> Blok kır | <b>Sağ Tık:</b> Blok koy</p>
-  <p><b>1-9:</b> Slot seç | <b>E:</b> Envanter | <b>ESC:</b> Menü</p>
-  <p><b>Fare:</b> Etrafına bak</p>
+  <p><b>1-9:</b> Slot seç | <b>E:</b> Envanter | <b>C:</b> Craft</p>
+  <p><b>ESC:</b> Menü</p>
 </div>
 <div id="pauseMenu">
   <h1>Oyun Duraklatıldı</h1>
@@ -131,6 +177,18 @@ body { overflow: hidden; font-family: 'Segoe UI', Arial, sans-serif; }
   <div class="inventory-grid" id="mainInventory"></div>
   <div class="hotbar-section">
     <div class="inventory-grid" id="hotbarInventory"></div>
+  </div>
+</div>
+<div id="craftingMenu">
+  <h2>Üretim Masası</h2>
+  <div class="crafting-container">
+    <div class="crafting-grid" id="craftingGrid"></div>
+    <div class="crafting-arrow">→</div>
+    <div class="crafting-result" id="craftingResult"></div>
+  </div>
+  <div class="crafting-inventory">
+    <h3>Envanter</h3>
+    <div class="inventory-grid" id="craftingInventory"></div>
   </div>
 </div>
 
@@ -154,7 +212,8 @@ const BLOCKS = {
   DEEPSLATE: 4,
   BEDROCK: 5,
   WOOD: 6,
-  LEAVES: 7
+  LEAVES: 7,
+  PLANKS: 8
 };
 
 const BLOCK_INFO = {
@@ -164,8 +223,29 @@ const BLOCK_INFO = {
   [BLOCKS.DEEPSLATE]: { name: 'Kayrak Taşı', color: 0x3a3a3a },
   [BLOCKS.BEDROCK]:   { name: 'Katman Kayası', color: 0x222222, unbreakable: true },
   [BLOCKS.WOOD]:      { name: 'Ağaç Gövdesi', color: 0x6b4423 },
-  [BLOCKS.LEAVES]:    { name: 'Yapraklar', color: 0x2d7a2d, transparent: true }
+  [BLOCKS.LEAVES]:    { name: 'Yapraklar', color: 0x2d7a2d, transparent: true },
+  [BLOCKS.PLANKS]:    { name: 'Tahta', color: 0xb8815e }
 };
+
+// ============ TARİFLER ============
+const RECIPES = [
+  {
+    pattern: [
+      [BLOCKS.WOOD, 0, 0],
+      [0, 0, 0],
+      [0, 0, 0]
+    ],
+    result: { type: BLOCKS.PLANKS, count: 4 }
+  },
+  {
+    pattern: [
+      [BLOCKS.PLANKS, BLOCKS.PLANKS, 0],
+      [BLOCKS.PLANKS, BLOCKS.PLANKS, 0],
+      [0, 0, 0]
+    ],
+    result: { type: BLOCKS.PLANKS, count: 4 } // Şimdilik basit tutalım
+  }
+];
 
 // ============ DÜNYA AYARLARI ============
 const WORLD_WIDTH = 64;
@@ -192,7 +272,6 @@ function setBlock(x, y, z, type) {
 
 // ============ DÜNYA OLUŞTURMA ============
 function generateWorld() {
-  // Temel katmanlar
   for (let x = 0; x < WORLD_WIDTH; x++) {
     for (let z = 0; z < WORLD_DEPTH; z++) {
       for (let y = 0; y < WORLD_HEIGHT; y++) {
@@ -214,15 +293,12 @@ function generateWorld() {
       }
     }
   }
-  
-  // Ağaçlar oluştur
   generateTrees();
 }
 
 function generateTrees() {
-  // Grid sistemi ile düzenli ama random ağaçlar
-  const gridSpacing = 8; // Her 8 blokta bir ağaç denemesi
-  const treeChance = 0.3; // %30 şans
+  const gridSpacing = 8;
+  const treeChance = 0.3;
   
   for (let gx = 2; gx < WORLD_WIDTH - 2; gx += gridSpacing) {
     for (let gz = 2; gz < WORLD_DEPTH - 2; gz += gridSpacing) {
@@ -240,25 +316,22 @@ function generateTrees() {
 }
 
 function placeTree(x, y, z) {
-  // Gövde (4-6 blok yükseklik)
   const height = 4 + Math.floor(Math.random() * 3);
   for (let i = 0; i < height; i++) {
     setBlock(x, y + i, z, BLOCKS.WOOD);
   }
   
-  // Yapraklar
   const leafStart = y + height - 2;
   for (let dy = 0; dy < 3; dy++) {
     const radius = dy === 2 ? 1 : 2;
     for (let dx = -radius; dx <= radius; dx++) {
       for (let dz = -radius; dz <= radius; dz++) {
-        if (dx === 0 && dz === 0 && dy < 2) continue; // Gövde yerine koyma
-        if (Math.abs(dx) === radius && Math.abs(dz) === radius && Math.random() < 0.3) continue; // Köşeleri kır
+        if (dx === 0 && dz === 0 && dy < 2) continue;
+        if (Math.abs(dx) === radius && Math.abs(dz) === radius && Math.random() < 0.3) continue;
         setBlock(x + dx, leafStart + dy, z + dz, BLOCKS.LEAVES);
       }
     }
   }
-  // Üst yaprak
   setBlock(x, leafStart + 3, z, BLOCKS.LEAVES);
 }
 
@@ -397,25 +470,46 @@ const keys = {};
 let isLocked = false;
 let isPaused = false;
 let isInventoryOpen = false;
+let isCraftingOpen = false;
 
 document.addEventListener('keydown', (e) => { 
   keys[e.code] = true;
   
   // ESC - Pause menü
-  if (e.code === 'Escape' && isLocked && !isInventoryOpen) {
-    document.exitPointerLock();
-    isPaused = true;
-    document.getElementById('pauseMenu').classList.add('show');
-    document.getElementById('crosshair').style.display = 'none';
+  if (e.code === 'Escape') {
+    if (isInventoryOpen) {
+      closeInventory();
+    } else if (isCraftingOpen) {
+      closeCrafting();
+    } else if (isLocked) {
+      document.exitPointerLock();
+      isPaused = true;
+      document.getElementById('pauseMenu').classList.add('show');
+      document.getElementById('crosshair').style.display = 'none';
+    }
+    return;
   }
   
   // E - Envanter
-  if (e.code === 'KeyE' && isLocked && !isPaused) {
+  if (e.code === 'KeyE') {
+    if (isCraftingOpen) {
+      closeCrafting();
+    }
     toggleInventory();
+    return;
+  }
+  
+  // C - Craft
+  if (e.code === 'KeyC') {
+    if (isInventoryOpen) {
+      closeInventory();
+    }
+    toggleCrafting();
+    return;
   }
   
   // Slot seçimi
-  if (e.code.startsWith('Digit') && !isInventoryOpen) {
+  if (e.code.startsWith('Digit') && !isInventoryOpen && !isCraftingOpen) {
     const num = parseInt(e.code.replace('Digit', ''));
     if (num >= 1 && num <= 9) {
       selectedSlot = num - 1;
@@ -434,15 +528,16 @@ instructions.addEventListener('click', () => {
 
 document.addEventListener('pointerlockchange', () => {
   isLocked = document.pointerLockElement === canvas;
-  instructions.classList.toggle('hidden', isLocked || isPaused || isInventoryOpen);
   
-  if (!isLocked && !isPaused && !isInventoryOpen) {
-    // Fare serbest bırakıldı ama menü açık değil
+  if (!isLocked && !isPaused && !isInventoryOpen && !isCraftingOpen) {
+    instructions.classList.remove('hidden');
+  } else {
+    instructions.classList.add('hidden');
   }
 });
 
 document.addEventListener('mousemove', (e) => {
-  if (!isLocked || isPaused || isInventoryOpen) return;
+  if (!isLocked || isPaused || isInventoryOpen || isCraftingOpen) return;
   player.yaw -= e.movementX * 0.002;
   player.pitch -= e.movementY * 0.002;
   player.pitch = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, player.pitch));
@@ -451,24 +546,21 @@ document.addEventListener('mousemove', (e) => {
 // ============ ENVANTER ============
 const inventory = Array(36).fill(null).map(() => ({ type: null, count: 0 }));
 let selectedSlot = 0;
+let selectedInventorySlot = -1; // Envanterde seçili slot
 
 function addToInventory(blockType) {
-  // Önce mevcut slotta var mı
   for (let i = 0; i < inventory.length; i++) {
     if (inventory[i].type === blockType) {
       inventory[i].count++;
-      updateHotbarUI();
-      if (isInventoryOpen) updateInventoryUI();
+      updateAllUI();
       return;
     }
   }
-  // Boş slot bul
   for (let i = 0; i < inventory.length; i++) {
     if (inventory[i].type === null) {
       inventory[i].type = blockType;
       inventory[i].count = 1;
-      updateHotbarUI();
-      if (isInventoryOpen) updateInventoryUI();
+      updateAllUI();
       return;
     }
   }
@@ -480,11 +572,16 @@ function removeFromInventory(slotIndex) {
     if (inventory[slotIndex].count === 0) {
       inventory[slotIndex].type = null;
     }
-    updateHotbarUI();
-    if (isInventoryOpen) updateInventoryUI();
+    updateAllUI();
     return true;
   }
   return false;
+}
+
+function updateAllUI() {
+  updateHotbarUI();
+  if (isInventoryOpen) updateInventoryUI();
+  if (isCraftingOpen) updateCraftingUI();
 }
 
 // Hotbar UI
@@ -546,23 +643,29 @@ function toggleInventory() {
   
   if (isInventoryOpen) {
     document.exitPointerLock();
+    selectedInventorySlot = -1;
     updateInventoryUI();
     document.getElementById('crosshair').style.display = 'none';
   } else {
-    canvas.requestPointerLock();
-    document.getElementById('crosshair').style.display = 'block';
+    closeInventory();
   }
 }
 
+function closeInventory() {
+  isInventoryOpen = false;
+  inventoryEl.classList.remove('show');
+  selectedInventorySlot = -1;
+  canvas.requestPointerLock();
+  document.getElementById('crosshair').style.display = 'block';
+}
+
 function updateInventoryUI() {
-  // Ana envanter (slot 9-35)
   mainInventoryEl.innerHTML = '';
   for (let i = 9; i < 36; i++) {
     const slot = createInventorySlot(i);
     mainInventoryEl.appendChild(slot);
   }
   
-  // Hotbar (slot 0-8)
   hotbarInventoryEl.innerHTML = '';
   for (let i = 0; i < 9; i++) {
     const slot = createInventorySlot(i);
@@ -574,6 +677,7 @@ function updateInventoryUI() {
 function createInventorySlot(index) {
   const slot = document.createElement('div');
   slot.className = 'inventory-slot';
+  if (selectedInventorySlot === index) slot.classList.add('selected');
   slot.dataset.slot = index;
   
   const item = inventory[index];
@@ -591,15 +695,264 @@ function createInventorySlot(index) {
   }
   
   slot.addEventListener('click', () => {
-    // Slot seçimi (hotbar için)
-    if (index < 9) {
-      selectedSlot = index;
-      updateHotbarUI();
+    if (selectedInventorySlot === -1) {
+      // İlk tıklama - slot seç
+      if (inventory[index].type !== null) {
+        selectedInventorySlot = index;
+        updateInventoryUI();
+      }
+    } else if (selectedInventorySlot === index) {
+      // Aynı slota tıklama - seçimi kaldır
+      selectedInventorySlot = -1;
       updateInventoryUI();
+    } else {
+      // Farklı slota tıklama - yer değiştir
+      const temp = { ...inventory[index] };
+      inventory[index] = { ...inventory[selectedInventorySlot] };
+      inventory[selectedInventorySlot] = temp;
+      selectedInventorySlot = -1;
+      updateAllUI();
     }
   });
   
   return slot;
+}
+
+// ============ CRAFTING ============
+const craftingGrid = Array(9).fill(null).map(() => ({ type: null, count: 0 }));
+let craftingResult = { type: null, count: 0 };
+let selectedCraftSlot = -1;
+
+const craftingMenuEl = document.getElementById('craftingMenu');
+const craftingGridEl = document.getElementById('craftingGrid');
+const craftingResultEl = document.getElementById('craftingResult');
+const craftingInventoryEl = document.getElementById('craftingInventory');
+
+function toggleCrafting() {
+  isCraftingOpen = !isCraftingOpen;
+  craftingMenuEl.classList.toggle('show', isCraftingOpen);
+  
+  if (isCraftingOpen) {
+    document.exitPointerLock();
+    selectedCraftSlot = -1;
+    checkCraftingRecipe();
+    updateCraftingUI();
+    document.getElementById('crosshair').style.display = 'none';
+  } else {
+    closeCrafting();
+  }
+}
+
+function closeCrafting() {
+  // Craft grid'deki eşyaları envantere geri ver
+  for (let i = 0; i < 9; i++) {
+    if (craftingGrid[i].type !== null) {
+      addToInventory(craftingGrid[i].type);
+      craftingGrid[i] = { type: null, count: 0 };
+    }
+  }
+  
+  isCraftingOpen = false;
+  craftingMenuEl.classList.remove('show');
+  selectedCraftSlot = -1;
+  craftingResult = { type: null, count: 0 };
+  canvas.requestPointerLock();
+  document.getElementById('crosshair').style.display = 'block';
+  updateAllUI();
+}
+
+function checkCraftingRecipe() {
+  craftingResult = { type: null, count: 0 };
+  
+  // 3x3 grid'i 2D array'e çevir
+  const grid = [
+    [craftingGrid[0].type, craftingGrid[1].type, craftingGrid[2].type],
+    [craftingGrid[3].type, craftingGrid[4].type, craftingGrid[5].type],
+    [craftingGrid[6].type, craftingGrid[7].type, craftingGrid[8].type]
+  ];
+  
+  // Tarifleri kontrol et
+  for (const recipe of RECIPES) {
+    if (matchRecipe(grid, recipe.pattern)) {
+      craftingResult = { ...recipe.result };
+      return;
+    }
+  }
+}
+
+function matchRecipe(grid, pattern) {
+  for (let y = 0; y < 3; y++) {
+    for (let x = 0; x < 3; x++) {
+      if (grid[y][x] !== pattern[y][x]) return false;
+    }
+  }
+  return true;
+}
+
+function updateCraftingUI() {
+  // Craft grid
+  craftingGridEl.innerHTML = '';
+  for (let i = 0; i < 9; i++) {
+    const slot = document.createElement('div');
+    slot.className = 'crafting-slot';
+    if (selectedCraftSlot === i) slot.classList.add('selected');
+    
+    const item = craftingGrid[i];
+    if (item.type !== null && item.count > 0) {
+      const info = BLOCK_INFO[item.type];
+      const preview = document.createElement('div');
+      preview.className = 'slot-preview';
+      preview.style.background = '#' + (info.topColor || info.color).toString(16).padStart(6, '0');
+      slot.appendChild(preview);
+      
+      const count = document.createElement('span');
+      count.className = 'slot-count';
+      count.textContent = item.count;
+      slot.appendChild(count);
+    }
+    
+    slot.addEventListener('click', () => handleCraftGridClick(i));
+    craftingGridEl.appendChild(slot);
+  }
+  
+  // Result
+  craftingResultEl.innerHTML = '';
+  if (craftingResult.type !== null && craftingResult.count > 0) {
+    const info = BLOCK_INFO[craftingResult.type];
+    const preview = document.createElement('div');
+    preview.className = 'slot-preview';
+    preview.style.background = '#' + (info.topColor || info.color).toString(16).padStart(6, '0');
+    craftingResultEl.appendChild(preview);
+    
+    const count = document.createElement('span');
+    count.className = 'slot-count';
+    count.textContent = craftingResult.count;
+    craftingResultEl.appendChild(count);
+  }
+  
+  craftingResultEl.onclick = () => handleCraftResultClick();
+  
+  // Envanter
+  craftingInventoryEl.innerHTML = '';
+  for (let i = 0; i < 36; i++) {
+    const slot = document.createElement('div');
+    slot.className = 'inventory-slot';
+    if (selectedCraftSlot === i + 100) slot.classList.add('selected');
+    
+    const item = inventory[i];
+    if (item.type !== null && item.count > 0) {
+      const info = BLOCK_INFO[item.type];
+      const preview = document.createElement('div');
+      preview.className = 'slot-preview';
+      preview.style.background = '#' + (info.topColor || info.color).toString(16).padStart(6, '0');
+      slot.appendChild(preview);
+      
+      const count = document.createElement('span');
+      count.className = 'slot-count';
+      count.textContent = item.count;
+      slot.appendChild(count);
+    }
+    
+    slot.addEventListener('click', () => handleCraftInventoryClick(i));
+    craftingInventoryEl.appendChild(slot);
+  }
+}
+
+function handleCraftGridClick(index) {
+  if (selectedCraftSlot === -1) {
+    // Grid'den eşya al
+    if (craftingGrid[index].type !== null) {
+      selectedCraftSlot = index;
+      updateCraftingUI();
+    }
+  } else if (selectedCraftSlot === index) {
+    // Aynı slota tıklama - seçimi kaldır
+    selectedCraftSlot = -1;
+    updateCraftingUI();
+  } else if (selectedCraftSlot < 9) {
+    // Grid'den grid'e taşı
+    const temp = { ...craftingGrid[index] };
+    craftingGrid[index] = { ...craftingGrid[selectedCraftSlot] };
+    craftingGrid[selectedCraftSlot] = temp;
+    selectedCraftSlot = -1;
+    checkCraftingRecipe();
+    updateCraftingUI();
+  } else {
+    // Envanterden grid'e taşı
+    const invIndex = selectedCraftSlot - 100;
+    if (inventory[invIndex].type !== null) {
+      if (craftingGrid[index].type === null) {
+        craftingGrid[index] = { type: inventory[invIndex].type, count: 1 };
+        removeFromInventory(invIndex);
+      } else if (craftingGrid[index].type === inventory[invIndex].type) {
+        craftingGrid[index].count++;
+        removeFromInventory(invIndex);
+      }
+      selectedCraftSlot = -1;
+      checkCraftingRecipe();
+      updateCraftingUI();
+    }
+  }
+}
+
+function handleCraftInventoryClick(index) {
+  if (selectedCraftSlot === -1) {
+    // Envanterden eşya al
+    if (inventory[index].type !== null) {
+      selectedCraftSlot = index + 100;
+      updateCraftingUI();
+    }
+  } else if (selectedCraftSlot === index + 100) {
+    // Aynı slota tıklama - seçimi kaldır
+    selectedCraftSlot = -1;
+    updateCraftingUI();
+  } else if (selectedCraftSlot >= 100) {
+    // Envanterden envantere taşı
+    const fromIndex = selectedCraftSlot - 100;
+    const temp = { ...inventory[index] };
+    inventory[index] = { ...inventory[fromIndex] };
+    inventory[fromIndex] = temp;
+    selectedCraftSlot = -1;
+    updateAllUI();
+  } else {
+    // Grid'den envantere taşı
+    const gridIndex = selectedCraftSlot;
+    if (craftingGrid[gridIndex].type !== null) {
+      if (inventory[index].type === null) {
+        inventory[index] = { ...craftingGrid[gridIndex] };
+        craftingGrid[gridIndex] = { type: null, count: 0 };
+      } else if (inventory[index].type === craftingGrid[gridIndex].type) {
+        inventory[index].count += craftingGrid[gridIndex].count;
+        craftingGrid[gridIndex] = { type: null, count: 0 };
+      }
+      selectedCraftSlot = -1;
+      checkCraftingRecipe();
+      updateAllUI();
+    }
+  }
+}
+
+function handleCraftResultClick() {
+  if (craftingResult.type === null) return;
+  
+  // Sonucu envantere ekle
+  addToInventory(craftingResult.type);
+  for (let i = 1; i < craftingResult.count; i++) {
+    addToInventory(craftingResult.type);
+  }
+  
+  // Grid'den malzemeleri eksilt
+  for (let i = 0; i < 9; i++) {
+    if (craftingGrid[i].type !== null) {
+      craftingGrid[i].count--;
+      if (craftingGrid[i].count <= 0) {
+        craftingGrid[i] = { type: null, count: 0 };
+      }
+    }
+  }
+  
+  checkCraftingRecipe();
+  updateAllUI();
 }
 
 // ============ PAUSE MENÜ ============
@@ -690,7 +1043,7 @@ let breakCooldown = 0;
 let placeCooldown = 0;
 
 canvas.addEventListener('mousedown', (e) => {
-  if (!isLocked || isPaused || isInventoryOpen) return;
+  if (!isLocked || isPaused || isInventoryOpen || isCraftingOpen) return;
   
   const target = getTargetBlock();
   if (!target) return;
@@ -763,7 +1116,6 @@ function updatePhysics(dt) {
   
   if (moveDir.length() > 0) moveDir.normalize();
   
-  // Koşma
   const currentSpeed = keys['ShiftLeft'] || keys['ShiftRight'] ? player.sprintSpeed : player.speed;
   
   player.velocity.x = moveDir.x * currentSpeed;
@@ -836,7 +1188,7 @@ function gameLoop() {
   if (breakCooldown > 0) breakCooldown -= dt;
   if (placeCooldown > 0) placeCooldown -= dt;
   
-  if (isLocked && !isPaused && !isInventoryOpen) {
+  if (isLocked && !isPaused && !isInventoryOpen && !isCraftingOpen) {
     updatePhysics(dt);
     
     const target = getTargetBlock();
